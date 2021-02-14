@@ -10,24 +10,6 @@ def get_gas_price(confirmation_speed: str = "fast"):
     data = requests.get("https://www.gasnow.org/api/v3/gas/price").json()
     return data["data"][confirmation_speed]
 
-#note you can use real gas prices and estimates here but for testing better to hardcode
-def harvest(strategy, keeper, vault):
-    # Evaluate gas cost of calling harvest
-    #gasprice = get_gas_price()
-    gasprice = 30*1e9
-    #txgas = strategy.harvest.estimate_gas()
-    txgas = 1500000 #1.5m
-    txGasCost = txgas * gasprice
-    avCredit = vault.creditAvailable(strategy)
-    if avCredit > 0:
-        print('Available credit from vault: ', avCredit/1e18)
-    harvestCondition = strategy.harvestTrigger(txGasCost, {'from': keeper})
-    if harvestCondition:
-        print('\n----bot calls harvest----')
-        print('Tx harvest() gas cost: ', txGasCost/1e18)
-        print('Gas price: ', gasprice/1e9)
-        strategy.harvest({'from': keeper})
-
 def tend(strategy, keeper):
   
     tendCondition = strategy.tendTrigger(0, {'from': keeper})
@@ -63,6 +45,9 @@ def stateOfStrat(strategy, dai, comp):
     print('Expected Profit:', strategy.expectedReturn()/  (10 ** decimals))
     toLiquidation =  strategy.getblocksUntilLiquidation()
     print('Weeks to liquidation:', toLiquidation/44100)
+
+def stateOfProxy(proxy, gauge, token, voter):
+    print(f"\n----state of Voter Proxy----")
 
 def genericStateOfStrat(strategy, currency, vault):
     decimals = currency.decimals()

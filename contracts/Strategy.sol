@@ -2,14 +2,9 @@
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
-import "./interfaces/curve/Curve.sol";
-import "./interfaces/curve/Gauge.sol";
-import "./interfaces/curve/IMinter.sol";
-import "./interfaces/curve/ICrvV3.sol";
-import "./interfaces/lido/ISteth.sol";
-import "./interfaces/1inch/IMooniswap.sol";
-import "./interfaces/UniswapInterfaces/IUniswapV2Router02.sol";
-
+import {ICurveFi} from "../interfaces/curve/ICurveFi.sol";
+import {IUniswapV2Router02} from "../interfaces/uniswap/IUniswapV2Router.sol";
+import {StrategyProxy} from "../interfaces/yearn/StrategyProxy.sol";
 
 // These are the core Yearn libraries
 import {
@@ -30,26 +25,24 @@ contract Strategy is BaseStrategy {
     using Address for address;
     using SafeMath for uint256;
 
-    address private uniswapRouter = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-    address private sushiswapRouter = 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F;
-    address private mooniswappool = 0x1f629794B34FFb3B29FF206Be5478A52678b47ae;
-
-    address public ldoRouter = 0x1f629794B34FFb3B29FF206Be5478A52678b47ae;
-    address[] public ldoPath;
-
-    address public crvRouter = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-    address[] public crvPath;
-
-    Gauge public LiquidityGaugeV2 =  Gauge(address(0x182B723a58739a9c974cFDB385ceaDb237453c28));
-    ICurveFi public StableSwapSTETH =  ICurveFi(address(0xDC24316b9AE028F1497c275EB9192a3Ea0f67022));
-   // IMinter public CrvMinter = IMinter(address(0xd061D61a4d941c39E5453435B6345Dc261C2fcE0));
-
+    // Tokens
+    IERC20 public ankrETH =  IERC20(address(0xE95A203B1a91a908F9B9CE46459d101078c2c3cb));
+    IERC20 public CRV =  IERC20(address(0xD533a949740bb3306d119CC777fa900bA034cd52));
+    IERC20 public ONX =  IERC20(address(0xE0aD1806Fd3E7edF6FF52Fdb822432e847411033));
+    IERC20 public ANKR = IERC20(address(0x8290333ceF9e6D528dD5618Fb97a76f268f3EDD4));
     address public constant weth = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
-    ISteth public stETH =  ISteth(address(0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84));
-    IERC20 public LDO =  IERC20(address(0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32));
-    ICrvV3 public CRV =  ICrvV3(address(0xD533a949740bb3306d119CC777fa900bA034cd52));
+    // Dex variables
+    mapping(address => address) public routers;
+    address[] public crvPath;
+    address[] public ankrPath;
+    address[] public onxPath;
 
+    // Curve contract
+    address public gauge =  0x6d10ed2cF043E6fcf51A0e7b4C2Af3Fa06695707;
+    ICurveFi public CurveStableSwap = ICurveFi(address(0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2));
+
+    StrategyProxy public proxy = StrategyProxy(address(0x9a3a03C614dc467ACC3e81275468e033c98d960E));    
 
     constructor(address _vault) public BaseStrategy(_vault) {
         // You can set these parameters on deployment to whatever you want
@@ -57,197 +50,137 @@ contract Strategy is BaseStrategy {
         profitFactor = 2000;
         debtThreshold = 400*1e18;
 
-        want.safeApprove(address(LiquidityGaugeV2), uint256(-1));
-        stETH.approve(address(StableSwapSTETH), uint256(-1));
-        LDO.safeApprove(ldoRouter, uint256(-1));
-        CRV.approve(crvRouter, uint256(-1));
+        want.safeApprove(address(proxy), uint256(-1));
+        ankrETH.approve(address(CurveStableSwap), uint256(-1));
 
-        
-        ldoPath = new address[](2);
-        ldoPath[0] = address(LDO);
-        ldoPath[1] = weth;
+        address uniswap = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+        address sushiswap = 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F;
+        routers[address(CRV)] = sushiswap;
+        routers[address(ANKR)] = uniswap;
+        routers[address(ONX)] = uniswap;
+        CRV.approve(routers[address(CRV)], uint256(-1));
+        ONX.safeApprove(routers[address(ONX)], uint256(-1));
+        ANKR.approve(routers[address(ANKR)], uint256(-1));
 
         crvPath = new address[](2);
         crvPath[0] = address(CRV);
         crvPath[1] = weth;
+        
+        ankrPath = new address[](2);
+        ankrPath[0] = address(ANKR);
+        ankrPath[1] = weth;
+
+        onxPath = new address[](2);
+        onxPath[0] = address(ONX);
+        onxPath[1] = weth;
     }
 
 
     //we get eth
     receive() external payable {}
 
-
-    // ******** OVERRIDE THESE METHODS FROM BASE CONTRACT ************
-    //0 uniswap, 1 sushi, 2 inch
-    function setLDORouter(uint256 exchange, address[] calldata _path) public onlyGovernance {
-        if(exchange == 0){
-            ldoRouter = uniswapRouter;
-        }else if (exchange == 1) {
-            ldoRouter = sushiswapRouter;
-        }else if (exchange == 2) {
-            ldoRouter = mooniswappool;
-        }else{
-            require(false, "incorrect pool");
-        }
-
-        ldoPath = _path;
-        LDO.safeApprove(ldoRouter, uint256(-1));
-    }
-
-    function updateMooniswapPoolAddress(address newAddress) public onlyGovernance {
-        mooniswappool = newAddress;
-    }
-
-    function setCRVRouter(uint256 exchange, address[] calldata _path) public onlyGovernance {
-        if(exchange == 0){
-            crvRouter = uniswapRouter;
-        }else if (exchange == 1) {
-            crvRouter = sushiswapRouter;
-        }else{
-            require(false, "incorrect pool");
-        }
-        crvPath = _path;
-        CRV.approve(crvRouter, uint256(-1));
-    }
-
     function name() external override view returns (string memory) {
         // Add your own name here, suggestion e.g. "StrategyCreamYFI"
-        return "StrategystETHCurve";
+        return "StrategyAnkerETHCurve";
     }
 
     function estimatedTotalAssets() public override view returns (uint256) {
-        return LiquidityGaugeV2.balanceOf(address(this));
+        return proxy.balanceOf(gauge);
     }
 
-    function prepareReturn(uint256 _debtOutstanding)
-        internal
-        override
-        returns (
-            uint256 _profit,
-            uint256 _loss,
-            uint256 _debtPayment
-        )
-    {
+    function prepareReturn(uint256 _debtOutstanding) internal override returns (uint256 _profit, uint256 _loss, uint256 _debtPayment) {
         // TODO: Do stuff here to free up any returns back into `want`
         // NOTE: Return `_profit` which is value generated by all positions, priced in `want`
         // NOTE: Should try to free up at least `_debtOutstanding` of underlying position
 
-        uint256 guageTokens = LiquidityGaugeV2.balanceOf(address(this));
-        if(guageTokens > 0){
-            LiquidityGaugeV2.claim_rewards();
-            IMinter(CRV.minter()).mint(address(LiquidityGaugeV2));
+        uint256 gaugeTokens = proxy.balanceOf(gauge);
 
-           uint256 ldo_balance = LDO.balanceOf(address(this));
-
-            if(ldo_balance > 0){
-                _sell(address(LDO), ldo_balance);
-            }
-
+        if(gaugeTokens > 0){
+            proxy.harvest(gauge);
+            proxy.claimRewards(gauge, address(ANKR));
+            proxy.claimRewards(gauge, address(ONX));
+            // Get rewards tokens balance + sell for ETH
             uint256 crv_balance = CRV.balanceOf(address(this));
-
+            uint256 ankr_balance = ANKR.balanceOf(address(this));
+            uint256 onx_balance = ONX.balanceOf(address(this));
             if(crv_balance > 0){
-                _sell(address(CRV), crv_balance);
+                //_sell(address(CRV), crv_balance);
+            }
+            if(ankr_balance > 0){
+                //_sell(address(ANKR), ankr_balance);
+            }
+            if(onx_balance > 0){
+                _sell(address(ONX), onx_balance);
             }
 
-            uint256 balance = address(this).balance;
-            uint256 balance2 = stETH.balanceOf(address(this));
-
-            if(balance > 0 || balance2 > 0){
-                StableSwapSTETH.add_liquidity{value: balance}([balance, balance2], 0);
+            // Invest balances back into want
+            uint256 eth_balance = address(this).balance;
+            uint256 ankrEth_balance = ankrETH.balanceOf(address(this));
+            if(eth_balance > 0 || ankrEth_balance > 0){
+                CurveStableSwap.add_liquidity{value: eth_balance}([eth_balance, ankrEth_balance], 0);
             }
-
-
             _profit = want.balanceOf(address(this));
         }
 
         if(_debtOutstanding > 0){
             if(_debtOutstanding > _profit){
-                uint256 stakedBal = LiquidityGaugeV2.balanceOf(address(this));
-                LiquidityGaugeV2.withdraw(Math.min(stakedBal,_debtOutstanding - _profit));
+                uint256 stakedBal = proxy.balanceOf(gauge);
+                proxy.withdraw(gauge, address(want), Math.min(stakedBal,_debtOutstanding - _profit));
             }
-
             _debtPayment = Math.min(_debtOutstanding, want.balanceOf(address(this)).sub(_profit));
         }
-
-        
     }
 
     function adjustPosition(uint256 _debtOutstanding) internal override {
-
         uint256 _toInvest = want.balanceOf(address(this));
-
-        LiquidityGaugeV2.deposit(_toInvest);
+        want.safeTransfer(address(proxy), _toInvest);
+        proxy.deposit(gauge, address(want));
     }
 
-    function liquidatePosition(uint256 _amountNeeded)
-        internal
-        override
-        returns (uint256 _liquidatedAmount, uint256 _loss)
-    {
-
+    function liquidatePosition(uint256 _amountNeeded) internal override returns (uint256 _liquidatedAmount, uint256 _loss) {
         uint256 wantBal = want.balanceOf(address(this));
-        uint256 stakedBal = LiquidityGaugeV2.balanceOf(address(this));
+        uint256 stakedBal = proxy.balanceOf(gauge);
 
         if(_amountNeeded > wantBal){
-            LiquidityGaugeV2.withdraw(Math.min(stakedBal, _amountNeeded - wantBal));
+            proxy.withdraw(gauge, address(want), Math.min(stakedBal, _amountNeeded - wantBal));
         }
-
         _liquidatedAmount = Math.min(_amountNeeded, want.balanceOf(address(this)));
 
     }
 
     // NOTE: Can override `tendTrigger` and `harvestTrigger` if necessary
-
     function prepareMigration(address _newStrategy) internal override {
-        IERC20 lg = IERC20(address(LiquidityGaugeV2));
-        
-        lg.safeTransfer(_newStrategy, lg.balanceOf(address(this)));
+        // Because this strategy utilizes the proxy, gauge tokens will remain in the voter contract even after migration
+        prepareReturn(proxy.balanceOf(gauge));
     }
 
     //sell all function
-    function _sell(address currency, uint256 amount) internal {
-
-        if(currency == address(LDO)){
-            if(ldoRouter == mooniswappool){
-                //we sell to stETH
-                IMooniswap(mooniswappool).swap(currency, address(stETH), amount, 1, strategist);
-            }else{
-                IUniswapV2Router02(ldoRouter).swapExactTokensForETH(amount, uint256(0), ldoPath, address(this), now);
-            }
-            
+    function _sell(address token, uint256 amount) internal {
+        if(token == address(CRV)){
+            IUniswapV2Router02(routers[address(CRV)]).swapExactTokensForETH(amount, uint256(0), crvPath, address(this), now);
         }
-        else if(currency == address(CRV)){
-            IUniswapV2Router02(crvRouter).swapExactTokensForETH(amount, uint256(0), crvPath, address(this), now);
+        else if(token == address(ANKR)){
+            IUniswapV2Router02(routers[address(ANKR)]).swapExactTokensForETH(amount, uint256(0), ankrPath, address(this), now);
+        }
+        else if(token == address(ONX)){
+            IUniswapV2Router02(routers[address(ONX)]).swapExactTokensForETH(amount, uint256(0), onxPath, address(this), now);
         }else{
             require(false, "BAD SELL");
         }
 
     }
 
+    function setDex(address _token, address _newDex) public onlyGovernance {
+        routers[_token] = _newDex;
+    }
 
-    // Override this to add all tokens/tokenized positions this contract manages
-    // on a *persistent* basis (e.g. not just for swapping back to want ephemerally)
-    // NOTE: Do *not* include `want`, already included in `sweep` below
-    //
-    // Example:
-    //
-    //    function protectedTokens() internal override view returns (address[] memory) {
-    //      address[] memory protected = new address[](3);
-    //      protected[0] = tokenA;
-    //      protected[1] = tokenB;
-    //      protected[2] = tokenC;
-    //      return protected;
-    //    }
-    function protectedTokens()
-        internal
-        override
-        view
-        returns (address[] memory)
-    {
+    function setProxy(address _proxy) public onlyGovernance {
+        proxy = StrategyProxy(_proxy);
+    }
 
+    function protectedTokens() internal override view returns (address[] memory) {
         address[] memory protected = new address[](1);
-          protected[0] = address(LiquidityGaugeV2);
-    
+          protected[0] = address(gauge);
           return protected;
     }
 }
