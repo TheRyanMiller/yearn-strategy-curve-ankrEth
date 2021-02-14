@@ -1,11 +1,12 @@
 from itertools import count
 from brownie import Wei, reverts
 from brownie.convert import to_bytes
-from useful_methods import genericStateOfStrat,genericStateOfVault
+from useful_methods import printTokenBalances,printStrategyStats,printVaultStats
 import brownie
 
 
 def test_ops(want, strategy, crv, onx, ankreth, ankr, rewards, chain, vault, whale, gov, strategist, interface, voter_proxy, voter):
+    tokens = [crv, onx, ankr, ankreth]
     rate_limit = 1_000_000_000 *1e18
     debt_ratio = 10_000
     vault.addStrategy(strategy, debt_ratio, rate_limit, 1000, {"from": gov})
@@ -15,51 +16,37 @@ def test_ops(want, strategy, crv, onx, ankreth, ankr, rewards, chain, vault, wha
     whaledeposit = 200e18
     want.approve(vault, 2 ** 256 - 1, {"from": whale} )
     vault.deposit(whaledeposit, {"from": whale})
+    print("\n****** Whale Deposit: "+ str(whaledeposit/1e18) +" ******")
 
     strategy.harvest({'from': strategist})
-    print("\n-----HARVEST1, Move LPs to strategy ----")
-    genericStateOfStrat(strategy, want, vault)
-    genericStateOfVault(vault, want)
+    print("\n****** HARVEST1, Move LPs to strategy ******")
+    
+    printVaultStats(vault, want)
+    printStrategyStats(strategy, want, vault)
 
-    chain.sleep(2592000) # fast forward 30 days
+    """
+        Here we fast-forward the chain to earn our rewards.
+        NOTE: Bonus token rewards are distrubuted every 5 days. So we don't want to sleep for any more than that or else the APY will be inaccurate.
+    """
+    #chain.sleep(31540000) # fast forward 1 year
+    #chain.sleep(2628000) # fast forward 1 month
+    chain.sleep(86400) # fast forward 1 day
+
     chain.mine(1)
 
     strategy.harvest({'from': strategist})
-    print("\n-----HARVEST2, Re-invest earnings ----")
-
-    ankrethbal = ankreth.balanceOf(strategy)
-    ethbal = strategy.balance()
-
-    print("ankrETH = ", ankrethbal/1e18)
-    print("ETH = ", ethbal/1e18)
-
-    print("\n~VOTER BALANCES~")
-    print("CRV:",crv.balanceOf(voter))
-    print("ANKR:",ankr.balanceOf(voter))
-    print("ONX:",onx.balanceOf(voter))
-    print("ANKRETH:",ankreth.balanceOf(voter))
-    print("ETH:",voter.balance())
-    print("~PROXY BALANCES~")
-    print("CRV:",crv.balanceOf(voter_proxy))
-    print("ANKR:",ankr.balanceOf(voter_proxy))
-    print("ONX:",onx.balanceOf(voter_proxy))
-    print("ANKRETH:",ankreth.balanceOf(voter_proxy))
-    print("ETH:",voter_proxy.balance())
-    print("~STRAT BALANCES~")
-    print("CRV:",crv.balanceOf(strategy))
-    print("ANKR:",ankr.balanceOf(strategy))
-    print("ONX:",onx.balanceOf(strategy))
-    print("ANKRETH:",ankreth.balanceOf(strategy))
-    print("ETH:",strategy.balance())
+    print("\n****** HARVEST2, Re-invest earnings ******")
 
     # APR = ((Total balance after 1 month - Principle) * 12months) / Principle
     print("\nEstimated APR: ", "{:.2%}".format(((
-        vault.totalAssets()-whaledeposit)*12)
+        vault.totalAssets()-whaledeposit)*365)
         /whaledeposit
     ))
+    printTokenBalances(tokens, strategy, voter_proxy, voter)
+    vault.withdraw({"from": whale}) # If no amount of shares is specified, default to all
+    print("\n****** WITHDRAW ******")
 
-    vault.withdraw({"from": whale})
-    print("\nWithdraw")
-    genericStateOfStrat(strategy, want, vault)
-    genericStateOfVault(vault, want)
-    print("Whale profit: ", (want.balanceOf(whale) - whalebefore)/1e18)
+    printVaultStats(vault, want)
+    printStrategyStats(strategy, want, vault)
+
+    print("\nWhale profit: ", (want.balanceOf(whale) - whalebefore)/1e18)

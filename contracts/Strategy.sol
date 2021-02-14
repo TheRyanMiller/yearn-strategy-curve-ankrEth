@@ -104,10 +104,10 @@ contract Strategy is BaseStrategy {
             uint256 ankr_balance = ANKR.balanceOf(address(this));
             uint256 onx_balance = ONX.balanceOf(address(this));
             if(crv_balance > 0){
-                //_sell(address(CRV), crv_balance);
+                _sell(address(CRV), crv_balance);
             }
             if(ankr_balance > 0){
-                //_sell(address(ANKR), ankr_balance);
+                _sell(address(ANKR), ankr_balance);
             }
             if(onx_balance > 0){
                 _sell(address(ONX), onx_balance);
@@ -117,7 +117,7 @@ contract Strategy is BaseStrategy {
             uint256 eth_balance = address(this).balance;
             uint256 ankrEth_balance = ankrETH.balanceOf(address(this));
             if(eth_balance > 0 || ankrEth_balance > 0){
-                CurveStableSwap.add_liquidity{value: eth_balance}([eth_balance, ankrEth_balance], 0);
+                CurveStableSwap.add_liquidity{value: eth_balance}([eth_balance, 0], 0);
             }
             _profit = want.balanceOf(address(this));
         }

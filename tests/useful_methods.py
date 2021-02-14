@@ -10,46 +10,10 @@ def get_gas_price(confirmation_speed: str = "fast"):
     data = requests.get("https://www.gasnow.org/api/v3/gas/price").json()
     return data["data"][confirmation_speed]
 
-def tend(strategy, keeper):
-  
-    tendCondition = strategy.tendTrigger(0, {'from': keeper})
-
-    if tendCondition:
-        print('\n----bot calls tend----')
-        strategy.tend({'from': keeper})
-
-def stateOfStrat(strategy, dai, comp):
-    print('\n----state of strat----')
-    
-    decimals = dai.decimals()
-    deposits, borrows = strategy.getCurrentPosition()
-    compBal = comp.balanceOf(strategy)
-    print('Comp:', compBal /  (10 ** decimals))
-    print('DAI:',dai.balanceOf(strategy)/  (10 ** decimals))
-    print('borrows:', borrows/  (10 ** decimals)) 
-    print('deposits:', deposits /  (10 ** decimals))
-    realbalance = dai.balanceOf(strategy) + deposits - borrows
-    print('total assets real:', realbalance/  (10 ** decimals))  
-
-    print('total assets estimate:', strategy.estimatedTotalAssets()/  (10 ** decimals))  
-    if deposits == 0:
-        collat = 0 
-    else:
-        collat = borrows / deposits
-    leverage = 1 / (1 - collat)
-    print(f'calculated collat: {collat:.5%}')
-    storedCollat = strategy.storedCollateralisation()/  (10 ** decimals)
-    print(f'stored collat: {storedCollat:.5%}') 
-    print(f'leverage: {leverage:.5f}x')
-    assert collat <= 0.75
-    print('Expected Profit:', strategy.expectedReturn()/  (10 ** decimals))
-    toLiquidation =  strategy.getblocksUntilLiquidation()
-    print('Weeks to liquidation:', toLiquidation/44100)
-
-def stateOfProxy(proxy, gauge, token, voter):
+def printProxyStats(proxy, gauge, token, voter):
     print(f"\n----state of Voter Proxy----")
 
-def genericStateOfStrat(strategy, currency, vault):
+def printStrategyStats(strategy, currency, vault):
     decimals = currency.decimals()
     print(f"\n----state of {strategy.name()}----")
 
@@ -71,7 +35,7 @@ def genericStateOfStrat(strategy, currency, vault):
     print("Emergency Exit:", strategy.emergencyExit())
 
 
-def genericStateOfVault(vault, currency):
+def printVaultStats(vault, currency):
     decimals = currency.decimals()
     print(f"\n----state of {vault.name()} vault----")
     balance = vault.totalAssets()/  (10 ** decimals)
@@ -80,49 +44,16 @@ def genericStateOfVault(vault, currency):
     print("Loose balance in vault:", currency.balanceOf(vault)/  (10 ** decimals))
     print(f"Total Debt: {balance:.5f}")
 
-def assertCollateralRatio(strategy):
-    deposits, borrows = strategy.getCurrentPosition()
-    collat = borrows / deposits
-    assert collat <=strategy.collateralTarget()/1e18
-
-def stateOfVault(vault, strategy):
-    print('\n----state of vault----')
-    strState = vault.strategies(strategy)
-    totalDebt = strState[5].to('ether')
-    totalReturns = strState[6].to('ether')
-    print(f'Total Strategy Debt: {totalDebt:.5f}')
-    print(f'Total Strategy Returns: {totalReturns:.5f}')
-    balance = vault.totalAssets().to('ether')
-    print(f'Total Assets: {balance:.5f}')
-    print("Share price: ", vault.pricePerShare()/1e18)
-
-def wait(blocks, chain):
-    print(f'\nWaiting {blocks} blocks')
-    timeN = chain.time()
-    endTime = blocks*13 + timeN
-    chain.mine(blocks,endTime)
-
-def sleep(chain, blocks):
-    timeN = chain.time()
-    endTime = blocks*13 + timeN
-    chain.mine(blocks,endTime)
-
-def deposit(amount, user, dai, vault):
-    print('\n----user deposits----')
-    dai.approve(vault, amount, {'from': user})
-    print('deposit amount:', amount.to('ether'))
-    vault.deposit(amount, {'from': user})    
-
-def withdraw(share,whale, dai, vault):
-    balanceBefore = dai.balanceOf(whale)
-    balance = vault.balanceOf(whale)
-   
-     
-    withdraw = min(balance, balance/share)
-    wits = withdraw/1e18
-
-    print(f'\n----user withdraws {wits}----')
-    vault.withdraw(withdraw, {'from': whale})
-    balanceAfter = dai.balanceOf(whale)
-    moneyOut = balanceAfter-balanceBefore
-    print('Money Out:', Wei(moneyOut).to('ether'))
+def printTokenBalances(tokens, strategy, voter_proxy, voter):
+    print("\n---Token Balances in Strategy")
+    print("Eth:",strategy.balance())
+    for x in tokens:
+        print(x.symbol()+":",x.balanceOf(strategy))
+    print("---Token Balances in StrategyProxy")
+    print("Eth:",voter_proxy.balance())
+    for x in tokens:
+        print(x.symbol()+":",x.balanceOf(voter_proxy))
+    print("---Token Balances in Voter")
+    print("Eth:",voter.balance())
+    for x in tokens:
+        print(x.symbol()+":",x.balanceOf(voter))
